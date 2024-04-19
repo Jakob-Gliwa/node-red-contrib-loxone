@@ -14,7 +14,7 @@ visualized in Loxone-Config.
 
 **You will get the data from Loxone's websocket _as is_. There is and will be no abstraction layer!**
 
-So please know how to handle the data according to the [structure file](https://www.loxone.com/dede/wp-content/uploads/sites/2/2021/06/1201_Structure-File.pdf) 
+So please know how to handle the data according to the [structure file](https://www.loxone.com/wp-content/uploads/datasheets/StructureFile.pdf) 
 or the [webservice documenation](https://www.loxone.com/enen/kb/web-services/).
 
 As of Loxone V9 the new token based authentification should be used. If you are still using V8 or earlier, please use `AES-256-CBC` or 
