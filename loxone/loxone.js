@@ -363,59 +363,54 @@ module.exports = function (RED) {
     };
 
     LoxoneMiniserver.prototype.deregisterOnlineNode = function (handler) {
-        this._onlineNodes.forEach(function (node, i, onlineNodes) {
-            if (node === handler) {
-                onlineNodes.splice(i, 1);
-            }
-        });
+        const idx = this._onlineNodes.indexOf(handler);
+        if (idx !== -1) {
+            this._onlineNodes.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.deregisterInputNode = function (handler) {
-        this._inputNodes.forEach(function (node, i, inputNodes) {
-            if (node === handler) {
-                inputNodes.splice(i, 1);
-            }
-        });
+        const idx = this._inputNodes.indexOf(handler);
+        if (idx !== -1) {
+            this._inputNodes.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.deregisterOutputNode = function (handler) {
-        this._outputNodes.forEach(function (node, i, outputNodes) {
-            if (node === handler) {
-                outputNodes.splice(i, 1);
-            }
-        });
+        const idx = this._outputNodes.indexOf(handler);
+        if (idx !== -1) {
+            this._outputNodes.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.deregisterStreamInNode = function (handler) {
-        this._streamInNodes.forEach(function (node, i, streamInNodes) {
-            if (node === handler) {
-                streamInNodes.splice(i, 1);
-            }
-        });
+        const idx = this._streamInNodes.indexOf(handler);
+        if (idx !== -1) {
+            this._streamInNodes.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.deregisterStreamAllNode = function (handler) {
-        this._streamAllNodes.forEach(function (node, i, streamAllNodes) {
-            if (node === handler) {
-                streamAllNodes.splice(i, 1);
-            }
-        });
+        const idx = this._streamAllNodes.indexOf(handler);
+        if (idx !== -1) {
+            this._streamAllNodes.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.deregisterWebserviceNode = function (handler) {
-        this._webserviceNodes.forEach(function (node, i, outputNodes) {
-            if (node === handler) {
-                outputNodes.splice(i, 1);
-            }
-        });
+        const idx = this._webserviceNodes.indexOf(handler);
+        if (idx !== -1) {
+            this._webserviceNodes.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.removeWebserviceNodeFromQueue = function (handler, uri) {
-        this._webserviceNodeQueue.forEach(function (node, i, outputNodes) {
-            if (node.handler === handler && node.uri === uri) {
-                outputNodes.splice(i, 1);
-            }
+        const idx = this._webserviceNodeQueue.findIndex(function (node) {
+            return node.handler === handler && node.uri === uri;
         });
+        if (idx !== -1) {
+            this._webserviceNodeQueue.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.setConnectionStatusMsg = function (color, text, shape) {
