@@ -2,6 +2,17 @@ module.exports = function (RED) {
     "use strict";
     const node_lox_ws_api = require("node-lox-ws-api");
     const http = require('http');
+    
+    // Helper functions on module scope (not recreated per instance)
+    const JSON_START = new Set(["{", "["]);
+    
+    const limitString = (text, limit) => 
+        text.length <= limit ? text : `${text.slice(0, limit)}...(${text.length})`;
+    
+    function parseEventValue(v) {
+        if (typeof v !== 'string' || v === '' || !JSON_START.has(v[0])) return v;
+        try { return JSON.parse(v); } catch { return v; }
+    }
     const encMethods = {
         0: 'Token-Enc',
         1: 'AES-256-CBC',
@@ -97,23 +108,6 @@ module.exports = function (RED) {
     function LoxoneMiniserver(config) {
         function _updateEvent(uuid, evt) {
             node.handleEvent(uuid, evt);
-        }
-
-        function _limitString(text, limit) {
-            if (text.length <= limit) {
-                return text;
-            }
-            return text.substr(0, limit) + '...(' + text.length + ')';
-        }
-
-        const JSON_START = new Set(["{", "["]);
-        
-        function _parseEventValue(v) {
-            // node-lox-ws-api already returns native types (Number, Object, String)
-            if (typeof v !== "string" || v === "") return v;
-            if (!JSON_START.has(v[0])) return v;
-
-            try { return JSON.parse(v); } catch { return v; }
         }
 
         RED.nodes.createNode(this, config);
@@ -221,7 +215,7 @@ module.exports = function (RED) {
         client.on('message_text', function (message) {
             switch (message.type) {
                 case 'json':
-                    data.json = _limitString(JSON.stringify(message.json), text_logger_limit);
+                    data.json = limitString(JSON.stringify(message.json), text_logger_limit);
                     node.log("received text message: " + data.json);
 
                     break;
@@ -271,7 +265,7 @@ module.exports = function (RED) {
 
                     break;
                 default:
-                    data.text = _limitString(message.data, text_logger_limit);
+                    data.text = limitString(message.data, text_logger_limit);
                     node.log("received text message: " + data.text);
             }
         });
@@ -448,47 +442,21 @@ module.exports = function (RED) {
     };
 
     LoxoneMiniserver.prototype.buildMsgObject = function (event, uuid, controlStructure) {
-        //get state name
-        let stateName;
-        for (stateName in controlStructure.states) {
-            if (
-                controlStructure.states.hasOwnProperty(stateName) &&
-                (controlStructure.states[stateName] === uuid || controlStructure.states[stateName].indexOf(uuid) > -1)
-            ) {
+        const tpl = this.structureData._messageTemplateCache.get(uuid);
+        if (tpl) return { ...tpl, payload: parseEventValue(event) };
 
-                if (typeof controlStructure.states[stateName] !== 'string' && controlStructure.states[stateName].indexOf(uuid) > -1) {
-                    stateName += ':' + controlStructure.states[stateName].indexOf(uuid);
-                }
-
-                break;
-            }
-        }
-
-        let payload = _parseEventValue(event);
-
-        //check if control has a room
-        let room = null;
-        if (controlStructure.room && this.structureData.rooms[controlStructure.room].name) {
-            room = this.structureData.rooms[controlStructure.room].name;
-        }
-
-        //check if control has a category
-        let category = null;
-        if (controlStructure.cat && this.structureData.cats[controlStructure.cat].name) {
-            category = this.structureData.cats[controlStructure.cat].name;
-        }
-
+        const entry = this.structureData._stateIndex.get(uuid);
         return {
-            payload: payload,
+            payload: parseEventValue(event),
             topic: controlStructure.name || null,
-            state: stateName,
-            room: room,
-            category: category,
+            state: entry?.stateName ?? null,
+            room: entry?.roomName ?? null,
+            category: entry?.categoryName ?? null,
             details: controlStructure.details || null,
             type: controlStructure.type || null,
             isFavorite: controlStructure.isFavorite || null,
             isSecured: controlStructure.isSecured || null,
-            uuid: uuid || null,
+            uuid,
             uuidAction: controlStructure.uuidAction || null,
             msInfo: this.structureData.msInfo,
             lastModified: this.structureData.lastModified
@@ -548,7 +516,8 @@ module.exports = function (RED) {
             controls: {},
             msInfo: data.msInfo || {},
             lastModified: data.lastModified,
-            _stateIndex: new Map()  // Performance: O(1) lookup for findControlByState
+            _stateIndex: new Map(),  // Performance: O(1) lookup for findControlByState
+            _messageTemplateCache: new Map()  // Performance: Pre-built message templates
         };
 
         // Pass 1: Build controls structure (parent first, then subcontrols)
@@ -590,6 +559,14 @@ module.exports = function (RED) {
                 }
 
                 const stateValue = control.states[stateName];
+                
+                // Pre-resolve room and category names (Opt #9: Denormalized Index)
+                const roomName = control.room && data.rooms[control.room] 
+                    ? data.rooms[control.room].name 
+                    : null;
+                const categoryName = control.cat && data.cats[control.cat]
+                    ? data.cats[control.cat].name
+                    : null;
 
                 // Handle both string UUIDs and array of UUIDs
                 if (typeof stateValue === 'string') {
@@ -597,7 +574,9 @@ module.exports = function (RED) {
                     if (!structure._stateIndex.has(stateValue)) {
                         structure._stateIndex.set(stateValue, {
                             control: control,
-                            stateName: stateName
+                            stateName: stateName,
+                            roomName: roomName,
+                            categoryName: categoryName
                         });
                     }
                 } else if (Array.isArray(stateValue)) {
@@ -607,14 +586,37 @@ module.exports = function (RED) {
                         if (typeof uuid === 'string' && !structure._stateIndex.has(uuid)) {
                             structure._stateIndex.set(uuid, {
                                 control: control,
-                                stateName: stateName,
-                                arrayIndex: i  // Store array index for later use
+                                stateName: stateName + ':' + i,  // Include array index in state name
+                                roomName: roomName,
+                                categoryName: categoryName,
+                                arrayIndex: i
                             });
                         }
                     }
                 }
             }
         }
+
+        // Pass 3: Build message template cache (Opt #10: Message Template Cache)
+        // Pre-build templates with all static fields - only payload changes per event
+        structure._stateIndex.forEach(function(entry, stateUuid) {
+            const control = entry.control;
+            structure._messageTemplateCache.set(stateUuid, {
+                payload: null,  // Will be set per event
+                topic: control.name || null,
+                state: entry.stateName,
+                room: entry.roomName,
+                category: entry.categoryName,
+                details: control.details || null,
+                type: control.type || null,
+                isFavorite: control.isFavorite || null,
+                isSecured: control.isSecured || null,
+                uuid: stateUuid,
+                uuidAction: control.uuidAction || null,
+                msInfo: structure.msInfo,
+                lastModified: structure.lastModified
+            });
+        });
 
         return structure;
     }
