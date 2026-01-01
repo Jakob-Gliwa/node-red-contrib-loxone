@@ -430,26 +430,9 @@ module.exports = function (RED) {
     };
 
     LoxoneMiniserver.prototype.findControlByState = function (uuid) {
-        //search in all controls for given state uuid to find the corresponding control
-        for (let wantedControlUuid in this.structureData.controls) {
-            if (
-                this.structureData.controls.hasOwnProperty(wantedControlUuid) &&
-                this.structureData.controls[wantedControlUuid].hasOwnProperty('states')
-            ) {
-                for (let curState in this.structureData.controls[wantedControlUuid].states) {
-
-                    if (
-                        this.structureData.controls[wantedControlUuid].states.hasOwnProperty(curState) &&
-                        (this.structureData.controls[wantedControlUuid].states[curState].indexOf(uuid) > -1 ||
-                            this.structureData.controls[wantedControlUuid].states[curState] === uuid)
-                    ) {
-                        return this.structureData.controls[wantedControlUuid];
-                    }
-                }
-            }
-        }
-
-        return null;
+        // O(1) lookup via Map instead of O(n) linear search
+        const entry = this.structureData._stateIndex.get(uuid);
+        return entry ? entry.control : null;
     };
 
     LoxoneMiniserver.prototype.buildMsgObject = function (event, uuid, controlStructure) {
@@ -559,9 +542,11 @@ module.exports = function (RED) {
             cats: data.cats || {},
             controls: {},
             msInfo: data.msInfo || {},
-            lastModified: data.lastModified
+            lastModified: data.lastModified,
+            _stateIndex: new Map()  // Performance: O(1) lookup for findControlByState
         };
 
+        // Pass 1: Build controls structure (parent first, then subcontrols)
         for (let uuid in data.controls) {
             if (!data.controls.hasOwnProperty(uuid)) {
                 continue;
@@ -578,6 +563,50 @@ module.exports = function (RED) {
                     structure.controls[sub_uuid].parent = uuid;
                     structure.controls[sub_uuid].room = data.controls[uuid].room;
                     structure.controls[sub_uuid].cat = data.controls[uuid].cat;
+                }
+            }
+        }
+
+        // Pass 2: Build state index for O(1) lookups
+        // Parent controls are processed first, so they get priority if UUID appears in multiple places
+        for (let controlUuid in structure.controls) {
+            if (!structure.controls.hasOwnProperty(controlUuid)) {
+                continue;
+            }
+
+            const control = structure.controls[controlUuid];
+            if (!control.states) {
+                continue;
+            }
+
+            for (let stateName in control.states) {
+                if (!control.states.hasOwnProperty(stateName)) {
+                    continue;
+                }
+
+                const stateValue = control.states[stateName];
+
+                // Handle both string UUIDs and array of UUIDs
+                if (typeof stateValue === 'string') {
+                    // Single UUID string
+                    if (!structure._stateIndex.has(stateValue)) {
+                        structure._stateIndex.set(stateValue, {
+                            control: control,
+                            stateName: stateName
+                        });
+                    }
+                } else if (Array.isArray(stateValue)) {
+                    // Array of UUIDs (e.g., for multi-value states)
+                    for (let i = 0; i < stateValue.length; i++) {
+                        const uuid = stateValue[i];
+                        if (typeof uuid === 'string' && !structure._stateIndex.has(uuid)) {
+                            structure._stateIndex.set(uuid, {
+                                control: control,
+                                stateName: stateName,
+                                arrayIndex: i  // Store array index for later use
+                            });
+                        }
+                    }
                 }
             }
         }
