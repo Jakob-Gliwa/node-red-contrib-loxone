@@ -115,6 +115,7 @@ module.exports = function (RED) {
         node.structureData = null;
         node.active = true; //config.active;
         node._onlineNodes = [];
+        node._keepaliveNodes = [];  // Performance: direct array instead of eachNode()
         node._inputNodes = [];
         node._outputNodes = [];
         node._streamInNodes = [];
@@ -266,22 +267,15 @@ module.exports = function (RED) {
         });
 
         client.on('keepalive', function (time) {
-            RED.nodes.eachNode(function (nodeData) {
-                if (nodeData.type === 'loxone-keepalive' &&
-                    nodeData.hasOwnProperty('miniserver') &&
-                    nodeData.miniserver === node.id) {
-
-                    let keepaliveNode = RED.nodes.getNode(nodeData.id);
-                    if (keepaliveNode) {
-                        keepaliveNode.send({
-                            topic: 'keepalive',
-                            payload: time,
-                            msInfo: node.structureData.msInfo,
-                            lastModified: node.structureData.lastModified
-                        });
-                    }
-                }
-            });
+            // Performance: Direct iteration instead of eachNode()
+            for (let i = 0; i < node._keepaliveNodes.length; i++) {
+                node._keepaliveNodes[i].send({
+                    topic: 'keepalive',
+                    payload: time,
+                    msInfo: node.structureData.msInfo,
+                    lastModified: node.structureData.lastModified
+                });
+            }
         });
 
         client.on('message_header', function (header) {
@@ -345,6 +339,19 @@ module.exports = function (RED) {
 
     LoxoneMiniserver.prototype.registerStreamAllNode = function (handler) {
         this._streamAllNodes.push(handler);
+    };
+
+    LoxoneMiniserver.prototype.registerKeepaliveNode = function (handler) {
+        if (this._keepaliveNodes.indexOf(handler) === -1) {
+            this._keepaliveNodes.push(handler);
+        }
+    };
+
+    LoxoneMiniserver.prototype.deregisterKeepaliveNode = function (handler) {
+        const idx = this._keepaliveNodes.indexOf(handler);
+        if (idx !== -1) {
+            this._keepaliveNodes.splice(idx, 1);
+        }
     };
 
     LoxoneMiniserver.prototype.addWebserviceNodeToQueue = function (handler, msg, uri) {
@@ -617,27 +624,15 @@ module.exports = function (RED) {
     function sendOnlineNodeMsg(online, configId) {
         online = online || false;
 
-        RED.nodes.eachNode(function (theNode) {
-            if (theNode.type === 'loxone-online' &&
-                theNode.hasOwnProperty('miniserver') &&
-                theNode.miniserver === configId) {
-
-                let node = RED.nodes.getNode(theNode.id);
-                if (node) {
-                    /*
-                    node.status({
-                        fill: (node.miniserver.active !== true) ? 'grey' : 'yellow',
-                        shape: 'dot',
-                        text: (node.miniserver.active !== true) ? 'connection disabled' : 'offline'
-                    });
-                    */
-
-                    node.send({
-                        payload: online
-                    });
-                }
+        // Performance: Direct iteration instead of eachNode()
+        const miniserver = RED.nodes.getNode(configId);
+        if (miniserver && miniserver._onlineNodes) {
+            for (let i = 0; i < miniserver._onlineNodes.length; i++) {
+                miniserver._onlineNodes[i].send({
+                    payload: online
+                });
             }
-        });
+        }
     }
 
     function LoxoneControlInNode(config) {
@@ -770,6 +765,19 @@ module.exports = function (RED) {
 
     function LoxoneKeepaliveNode(config) {
         RED.nodes.createNode(this, config);
+        let node = this;
+
+        node.miniserver = RED.nodes.getNode(config.miniserver);
+        if (node.miniserver) {
+            node.miniserver.registerKeepaliveNode(node);
+
+            this.on('close', function (done) {
+                if (node.miniserver) {
+                    node.miniserver.deregisterKeepaliveNode(node);
+                }
+                done();
+            });
+        }
     }
 
     RED.nodes.registerType('loxone-keepalive', LoxoneKeepaliveNode);
