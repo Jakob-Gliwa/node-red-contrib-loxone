@@ -106,6 +106,16 @@ module.exports = function (RED) {
             return text.substr(0, limit) + '...(' + text.length + ')';
         }
 
+        const JSON_START = new Set(["{", "["]);
+        
+        function _parseEventValue(v) {
+            // node-lox-ws-api already returns native types (Number, Object, String)
+            if (typeof v !== "string" || v === "") return v;
+            if (!JSON_START.has(v[0])) return v;
+
+            try { return JSON.parse(v); } catch { return v; }
+        }
+
         RED.nodes.createNode(this, config);
 
         let node = this;
@@ -454,14 +464,7 @@ module.exports = function (RED) {
             }
         }
 
-        //evaluate payload
-        let payload;
-
-        try {
-            payload = JSON.parse(event);
-        } catch (err) {
-            payload = event;
-        }
+        let payload = _parseEventValue(event);
 
         //check if control has a room
         let room = null;
